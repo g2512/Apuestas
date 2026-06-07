@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract BettingSystem {
+
+    // --- Variables principales ---
+    uint public totalApuestas;        
+    uint public fondoContinuidad;     
+    uint public bolsaPremios;         
+    bool public eventoCerrado;        
+
+    address public admin;             
+    address public oraculo;           
+    uint public resultadoEvento;      
+
+    // --- Registro de apostadores ---
+    struct Apostador {
+        uint monto;       
+        uint opcion;      
+        bool registrado;  
+    }
+
+    mapping(address => Apostador) public apuestas;
+    address[] public listaApostadores;
+
+    // --- Eventos ---
+    event ApuestaRealizada(address jugador, uint monto, uint opcion);
+    event ResultadoCargado(uint resultado);
+    event PagoRealizado(address jugador, uint monto);
+    event FondoContinuidadGuardado(uint monto);
+
+    // --- Constructor ---
+    constructor(address _oraculo) {
+        admin = msg.sender;
+        oraculo = _oraculo;
+    }
+
+    // --- Modificadores ---
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "No autorizado: solo admin");
+        _;
+    }
+
+    modifier onlyOraculo() {
+        require(msg.sender == oraculo, "No autorizado: solo oraculo");
+        _;
+    }
+
+    // --- Funciones principales ---
+
+    // Registrar una apuesta
+    function apostar(uint opcion) public payable {
+        require(!eventoCerrado, "Evento cerrado");
+        require(!apuestas[msg.sender].registrado, "Ya apostaste");
+
+        apuestas[msg.sender] = Apostador(msg.value, opcion, true);
+        listaApostadores.push(msg.sender);
+
+        totalApuestas += msg.value;
+
+        emit ApuestaRealizada(msg.sender, msg.value, opcion);
+    }
+
+    // Cerrar apuestas (solo admin)
+    function cerrarApuestas() public onlyAdmin {
+        eventoCerrado = true;
+    }
+
+    // Oráculo carga resultado
+    function cargarResultado(uint resultado) public onlyOraculo {
+        resultadoEvento = resultado;
+        emit ResultadoCargado(resultado);
+        calcularPagos();
+    }
+
+    // Calcular pagos y fondo de continuidad
+    function calcularPagos() internal {
+        fondoContinuidad = totalApuestas * 5 / 100;
+        bolsaPremios = totalApuestas - fondoContinuidad;
+
+        emit FondoContinuidadGuardado(fondoContinuidad);
+
+        uint sumaGanadores = 0;
+        for (uint i = 0; i < listaApostadores.length; i++) {
+            address jugador = listaApostadores[i];
+            if (apuestas[jugador].opcion == resultadoEvento) {
+                sumaGanadores += apuestas[jugador].monto;
+            }
+        }
+
+        for (uint i = 0; i < listaApostadores.length; i++) {
+            address jugador = listaApostadores[i];
+            if (apuestas[jugador].opcion == resultadoEvento) {
+                uint pago = (apuestas[jugador].monto * bolsaPremios) / sumaGanadores;
+                (bool success, ) = payable(jugador).call{value: pago}("");
+                require(success, "Transferencia fallida");
+                emit PagoRealizado(jugador, pago);
+            }
+        }
+    }
+
+    // Nueva función de reporte
+function reporteFinal() public view returns (
+    uint resultado,
+    address[] memory todosApostadores,
+    address[] memory ganadores,
+    uint[] memory pagos,
+    uint fondo
+) {
+    resultado = resultadoEvento;
+    todosApostadores = listaApostadores;
+
+    // Contar ganadores primero
+    uint countGanadores = 0;
+    for (uint i = 0; i < listaApostadores.length; i++) {
+        if (apuestas[listaApostadores[i]].opcion == resultadoEvento) {
+            countGanadores++;
+        }
+    }
+
+    // Crear arrays de tamaño correcto
+    ganadores = new address[](countGanadores);
+    pagos = new uint[](countGanadores);
+
+    // Calcular suma de apuestas ganadoras
+    uint sumaGanadores = 0;
+    for (uint i = 0; i < listaApostadores.length; i++) {
+        if (apuestas[listaApostadores[i]].opcion == resultadoEvento) {
+            sumaGanadores += apuestas[listaApostadores[i]].monto;
+        }
+    }
+
+    // Llenar arrays con direcciones y pagos proporcionales
+    uint idx = 0;
+    for (uint i = 0; i < listaApostadores.length; i++) {
+        address jugador = listaApostadores[i];
+        if (apuestas[jugador].opcion == resultadoEvento) {
+            uint pago = (apuestas[jugador].monto * bolsaPremios) / sumaGanadores;
+            ganadores[idx] = jugador;
+            pagos[idx] = pago;
+            idx++;
+        }
+    }
+
+    fondo = fondoContinuidad;
+}
+
+}
